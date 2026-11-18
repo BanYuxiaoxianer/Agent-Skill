@@ -41,10 +41,10 @@
 把整个目录放到你的 agent 技能目录：
 
 ```bash
-# Claude Code / 兼容 Agent Skills 的工具
-git clone <this-repo> ~/.claude/skills/wish-to-code
+# 兼容 Agent Skills 的工具
+git clone <this-repo> ~/（your ai name）/skills/wish-to-code
 # 或直接复制
-cp -r wish-to-code ~/.claude/skills/
+cp -r wish-to-code ~/（your ai name）/skills/
 ```
 
 技能入口是 `SKILL.md`，触发词：模糊需求、自然语言转代码、需求文档转代码、CRUD、写个脚本。
