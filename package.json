@@ -1,0 +1,35 @@
+{
+  "name": "dsh-ctx-squeeze",
+  "version": "0.2.0",
+  "description": "Context squeeze for the DeepSeek Harness Web GUI (harness 0.2.0-rc.2): one click condenses the running conversation into a short Chinese summary, opens a fresh session in the same workspace, and injects that summary as the first message so a small-context model keeps a clean, compact context.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "dsh-ctx-squeeze.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    }
+  },
+  "author": "31",
+  "license": "MIT",
+  "scripts": {
+    "test": "node test/smoke.cjs"
+  }
+}

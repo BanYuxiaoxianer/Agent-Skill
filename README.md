@@ -1,81 +1,91 @@
-# cleareye
+# dsh-ctx-squeeze · 上下文挤压
 
-**Give your text-only LLM eyes — 看图 / OCR / 文档解析的本地优先桥接层**
+> 31's context squeeze for the DeepSeek Harness Web GUI — 把一段长对话挤成几句话，开个干净的新会话接着干。
 
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue)]() [![License: MIT](https://img.shields.io/badge/license-MIT-green)]() [![Deps](https://img.shields.io/badge/dependencies-0%20core-teal)]() [![Author](https://img.shields.io/badge/author-31-orange)]()
+面向 **harness 0.2.0-rc.2** 的 Web 插件。会话标题栏多一颗「压缩」按钮：点一下，宿主把当前对话压成 3~10 条中文要点，然后在**同一个工作区新建会话**，把摘要作为第一条消息注入；原会话原封不动留在侧边栏当完整历史。
 
-为**任何不具备视觉能力的纯文本大模型**补上眼睛：把图片变成结构化文字交回主模型推理；同样适用于自带视觉但能力受限、需要外部增强的模型。**核心零第三方依赖**（Python ≥ 3.10 标准库即可运行），可选引擎缺失时自动降级。
+适合小上下文窗口的模型，或者聊太长、token 账单开始发烫的时候。
 
-## 架构
+## 和内置压缩的区别
 
-```
-调用方（CLI / MCP / 任意 agent skill）
-   ↓
-vision_core.route          ← 统一 envelope · 缓存(24h) · 来源解析(path/file:///data:，http 默认禁用防 SSRF)
-   ↓ task_type 分流
-   ├─ reasoning → engines_reason ：OpenAI 兼容通道链[1..n 按序降级] → 本地 Ollama 兜底
-   ├─ ocr       → engines_ocr   ：rapidocr(本地) → tesseract(本地) → 视觉模型兜底 → 全无则 code=1
-   └─ document  → engines_doc   ：txt/md/csv/html/docx/pptx/xlsx 零依赖解析 · pdf 走 pymupdf/pypdf
-```
+| | 内置 compaction-basic | dsh-ctx-squeeze |
+|---|---|---|
+| 位置 | 原地把历史压成 checkpoint | 新开一个会话，旧会话保留 |
+| 触发 | 接近窗口上限时自动 | 手动点按钮，先确认 |
+| 好处 | 上下文连续 | 旧会话可随时翻回去，新会话从头干净 |
 
-## 快速开始
+两者都开没问题：内置压缩负责兜底，这个插件负责「我想重开一局」的时刻。
+
+## 安装
 
 ```bash
-# 1) 环境自检
-python vision_cli.py --health
-
-# 2) 配置视觉通道（二选一）：
-#    a. 复制 config.example.json → ~/.config/cleareye/config.json，填任意 OpenAI 兼容端点
-#    b. 完全本地：ollama pull llava（无需任何 API Key）
-
-# 3) 用起来
-python vision_cli.py 截图.png -t reasoning -q "这个报错是什么意思？"
-python vision_cli.py 票据.png -t ocr --lang ch
-python vision_cli.py 报告.docx -t document
+dsh plugin --profile web add D:\GitHub\dsh-ctx-squeeze
 ```
 
-### 注册为 MCP（opencode 示例）
+装完重启 harness（`dsh web`），会话标题栏右侧出现按钮。
 
-```json
-{ "mcp": { "cleareye": { "type": "local",
-  "command": ["python", "/path/to/cleareye/mcp_server.py"], "enabled": true } } }
+## 配置
+
+profile 条目里可以覆盖（不写就用默认）：
+
+```yaml
+- id: ui-ctx-squeeze
+  name: 'dsh-ctx-squeeze'
+  config:
+    enabled: true              # 总开关
+    maxInputChars: 20000       # 重放给模型的对话字符上限，超了从最旧的开始丢
+    maxTokens: 2048            # 摘要的 token 预算
+    summarizationProvider: ''  # 留空 = 跟着源会话自己的 provider
+    summarizationModel: ''     # 留空 = 跟着源会话自己的 model
 ```
 
-### 安装为 skill
+> `summarizationProvider` 和 `summarizationModel` 必须**成对**填写，只填一个会被忽略。
 
-把整个 `cleareye/` 目录放进 agent 的 skills 目录（opencode: `~/.config/opencode/skills/cleareye/`），`SKILL.md` 会在用户发图/发文档时引导 agent 自动调用。
+## 工作流程
 
-## 统一返回 envelope
+1. 前端 POST `/api/ctx-squeeze/run`，带上 `sessionId`。
+2. 宿主读这个会话的事件日志，用会话原本的 system prompt、tools 和消息前缀重放出输入（这样能吃到 provider 的前缀缓存，不被当成新请求）。
+3. 在重放内容后面追加一条压缩指令，走 `ctx.llm` 流式请求，只收文本块；被 token 上限截断直接判失败。
+4. 新建会话（同 cwd、同 agentPreset，记 `parentSession`），把摘要包成 `<squeeze-checkpoint>` 消息写进去并 flush。
+5. 前端刷新列表、跳到新会话，标题续成「原标题 · 续」。
 
-```json
-{"task_type": "reasoning|ocr|document", "tool_used": "...", "code": 0,
- "error": null, "result": "...", "confidence": "high|medium|low", "metadata": {}}
+源会话全程只读。密钥不出 harness，也不会进任何会话记录。
+
+## 水印
+
+水印只存在于源码，**界面与对话正文里都看不到**：
+
+- `lib/core.js` 的 `BRAND_SIGN`，写在摘要首块的 `marker` 元数据上（不进可见正文）
+- 每个源文件头部注释、`package.json` 的 `author`、`LICENSE` 的版权行
+- 要换名字：改 `lib/core.js` 的 `BRAND_SIGN`、`package.json` 的 `author`、`LICENSE` 版权行即可
+
+## 仓库结构
+
 ```
-
-| code | 含义 | 处置 |
-|------|------|------|
-| 0 | 成功 | 整合 result 进回答 |
-| 1 | 视觉通道全部不可用 | 配 channels 或起 Ollama |
-| 2 | 引擎未安装 | 按 metadata.hint 安装 |
-| 3 | 输入问题 | 检查路径/格式/大小/allow_urls |
-| 4 | 引擎执行失败 | 原样反馈 error，不编造内容 |
-| 5 | 超时 | 调大 timeout 或换通道 |
-
-## 可选增强
-
-```bash
-pip install pillow                    # 大图自动压缩（不装则原图发送）
-pip install rapidocr-onnxruntime      # 本地 OCR（不装则 OCR 走视觉模型兜底）
-pip install pymupdf                   # PDF 解析（不装则 PDF 提示安装，其余格式不受影响）
+dsh-ctx-squeeze/
+├── lib/core.js      # 纯函数：设置合并、守卫判断、重放、摘要包装（可单独测）
+├── lib/index.js     # host：注册路由、调 ctx.llm、建新会话
+├── lib/client.js    # 前端：手写 bundle，挂到会话标题栏 actions 座位
+├── dsh-ctx-squeeze.yml  # profile 补丁（只 insert，不替换官方组合）
+├── package.json
+└── test/smoke.cjs   # node test/smoke.cjs
 ```
 
 ## 测试
 
 ```bash
-python test_setup.py    # 生成 txt/html/docx/pptx/pdf 测试文件
-python test_mcp.py      # 模拟 MCP 客户端全链路握手测试
+cd D:\GitHub\dsh-ctx-squeeze
+node test/smoke.cjs
 ```
+
+不需要装 harness 依赖：host 的纯逻辑从 `lib/core.js` 直接测，前端用 vm + 假 React 跑一遍渲染和判断分支。
+
+## 已知限制
+
+- 只在模型空闲（没有进行中的 turn、没有未提交的输入、历史窗口已打开）时可用，忙时按钮禁用。
+- 摘要质量取决于路由到的模型；用很便宜的模型压长对话可能丢细节。
+- 压缩后原会话不会被删，历史多了要自己清。
 
 ## License
 
-MIT © 2026 **31**（源码内含 author watermark）
+MIT © 31

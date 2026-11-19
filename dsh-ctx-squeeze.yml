@@ -1,0 +1,6 @@
+# dsh-ctx-squeeze profile patch · by 31
+# 只往组合里“加”一个条目，不替换、不禁用任何官方组件：
+# 客户端挂在 conversation.session.header.actions 这个列表座位上。
+- insert:
+    - id: ui-ctx-squeeze
+      name: 'dsh-ctx-squeeze'
